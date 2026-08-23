@@ -72,11 +72,11 @@ export default function LandingPage() {
         setErrorMessage("Login dibatalkan oleh pengguna.");
       } else if (error?.code === "auth/unauthorized-domain") {
         setErrorMessage(
-          "Domain ini belum ditambahkan ke Authorized Domains di Firebase Console."
+          "Domain ini belum ditambahkan ke Authorized Domains di Firebase Console.",
         );
       } else {
         setErrorMessage(
-          `Gagal login dengan akun Google: ${error?.message || "Terjadi kesalahan"}`
+          `Gagal login dengan akun Google: ${error?.message || "Terjadi kesalahan"}`,
         );
       }
     } finally {
@@ -88,11 +88,28 @@ export default function LandingPage() {
     return (
       <div className="min-h-dvh bg-slate-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <svg className="w-8 h-8 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          <svg
+            className="w-8 h-8 animate-spin text-blue-600"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8v8H4z"
+            />
           </svg>
-          <span className="text-xs font-semibold text-slate-500">Memeriksa Sesi Login...</span>
+          <span className="text-xs font-semibold text-slate-500">
+            Memeriksa Sesi Login...
+          </span>
         </div>
       </div>
     );
@@ -180,10 +197,13 @@ export default function LandingPage() {
           {/* Privacy Note */}
           <div className="pt-2 text-center border-t border-slate-100">
             <p className="text-[11px] text-slate-500 leading-normal">
-              <strong>Catatan Privasi:</strong> Data formulir akan disinkronkan ke
-              spreadsheet pendataan resmi.
+              <strong>Catatan Privasi:</strong> Data formulir akan disinkronkan
+              ke spreadsheet pendataan resmi.
             </p>
           </div>
+          <span className="text-slate-400 text-xs">
+            Developer: fadhradzaki.s@gmail.com
+          </span>
         </div>
       </main>
 
