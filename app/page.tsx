@@ -1,24 +1,60 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithPopup, onAuthStateChanged } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
-import { setUserSession } from "@/lib/storage";
+import { getUserSession, setUserSession } from "@/lib/storage";
 
 export default function LandingPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Auto-redirect if user is already logged in
+  useEffect(() => {
+    // 1. Check local session
+    const localSession = getUserSession();
+    if (localSession?.isLoggedIn) {
+      router.replace("/dashboard");
+      return;
+    }
+
+    // 2. Check Firebase Auth state
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        setUserSession({
+          name: firebaseUser.displayName || "Relawan Posko",
+          email: firebaseUser.email || "",
+          photoUrl: firebaseUser.photoURL || "",
+        });
+        router.replace("/dashboard");
+      } else {
+        setIsCheckingAuth(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      // Login mulus 1-klik dengan Google Auth (Tanpa Peringatan Sensitif)
-      const result = await signInWithPopup(auth, googleProvider);
+      // Login mulus 1-klik dengan Google Auth & Drive Scopes
+      const { GoogleAuthProvider } = await import("firebase/auth");
+      const { googleDriveProvider } = await import("@/lib/firebase");
+      const result = await signInWithPopup(auth, googleDriveProvider);
       const user = result.user;
+
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const googleToken = credential?.accessToken;
+
+      if (googleToken && typeof window !== "undefined") {
+        localStorage.setItem("resku_google_access_token", googleToken);
+      }
 
       // Simpan data sesi relawan ke storage lokal
       setUserSession({
@@ -28,7 +64,7 @@ export default function LandingPage() {
       });
 
       // Redirect langsung ke dashboard pendataan
-      router.push("/dashboard");
+      router.replace("/dashboard");
     } catch (error: any) {
       console.error("Firebase Google Auth Error:", error);
 
@@ -47,6 +83,20 @@ export default function LandingPage() {
       setIsLoading(false);
     }
   };
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-dvh bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <svg className="w-8 h-8 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          <span className="text-xs font-semibold text-slate-500">Memeriksa Sesi Login...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-slate-50 text-slate-900 flex flex-col justify-between selection:bg-blue-600 selection:text-white">

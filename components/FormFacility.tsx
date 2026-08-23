@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DamageLevel,
   EducationSubcategory,
@@ -10,8 +10,10 @@ import {
   LogEntry,
   RegionSelection,
 } from '@/types/resku';
-import { addLogEntry } from '@/lib/storage';
-import { syncEntryToGoogleSheets } from '@/lib/google-sheets';
+import { addLogEntry, getSpreadsheetConfig } from '@/lib/storage';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { auth, googleDriveProvider } from '@/lib/firebase';
+import { ensureSpreadsheetForRegency, syncEntryToGoogleSheets } from '@/lib/google-sheets';
 
 interface Props {
   region: RegionSelection;
@@ -19,6 +21,8 @@ interface Props {
 }
 
 export default function FormFacility({ region, onSuccess }: Props) {
+  const [config, setConfig] = useState(getSpreadsheetConfig(region.regencyCode));
+  const [isConnecting, setIsConnecting] = useState(false);
   const [category, setCategory] = useState<FacilityCategory>('Pendidikan');
   const [eduSubcategory, setEduSubcategory] = useState<EducationSubcategory>('SD');
   const [healthSubcategory, setHealthSubcategory] = useState<HealthSubcategory>('Puskesmas');
@@ -32,6 +36,46 @@ export default function FormFacility({ region, onSuccess }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  useEffect(() => {
+    const sync = () => setConfig(getSpreadsheetConfig(region.regencyCode));
+    sync();
+    window.addEventListener('resku-config-updated', sync);
+    return () => window.removeEventListener('resku-config-updated', sync);
+  }, [region.regencyCode]);
+
+  const isConnected = Boolean(
+    config.isConnected &&
+    config.spreadsheetId &&
+    !config.spreadsheetId.startsWith("resku-sheet-") &&
+    config.spreadsheetUrl.includes("/spreadsheets/d/")
+  );
+
+  const handleConnectDriveInline = async () => {
+    setIsConnecting(true);
+    try {
+      const result = await signInWithPopup(auth, googleDriveProvider);
+      const user = result.user;
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const googleToken = credential?.accessToken;
+
+      if (googleToken && typeof window !== 'undefined') {
+        localStorage.setItem('resku_google_access_token', googleToken);
+
+        const newConfig = await ensureSpreadsheetForRegency(
+          googleToken,
+          region,
+          user.email || '',
+          user.displayName || 'Relawan'
+        );
+        setConfig(newConfig);
+      }
+    } catch (err) {
+      console.error('Inline Drive connection error:', err);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!facilityName.trim()) return;
@@ -42,13 +86,14 @@ export default function FormFacility({ region, onSuccess }: Props) {
     const newId = `f-${Date.now()}`;
     const timestamp = new Date().toISOString();
 
-    const districtName = region.isManual ? region.manualDistrict : region.districtName;
-    const villageName = region.isManual ? region.manualVillage : region.villageName;
+    const districtName = region.isManual ? (region.manualDistrict || region.districtName) : region.districtName;
+    const villageName = region.isManual ? (region.manualVillage || region.villageName) : region.villageName;
+    const regencyName = region.regencyName;
+    const provinceName = region.provinceName;
 
-    let activeSubcat = '';
-    if (category === 'Pendidikan') activeSubcat = eduSubcategory;
-    else if (category === 'Kesehatan') activeSubcat = healthSubcategory;
-    else activeSubcat = otherSubcategory;
+    const regionSummary = `Kec. ${districtName || '-'}, Desa ${villageName || '-'}`;
+    const categoryDetail = category === 'Pendidikan' ? eduSubcategory : category === 'Kesehatan' ? healthSubcategory : otherSubcategory;
+    const subtitle = `${category} (${categoryDetail}) • ${damageLevel}`;
 
     const payload: FacilityDamageData = {
       id: newId,
@@ -56,7 +101,7 @@ export default function FormFacility({ region, onSuccess }: Props) {
       region,
       subLocation,
       category,
-      subcategory: activeSubcat,
+      subcategory: categoryDetail,
       facilityName,
       damageLevel,
       notesNeeded,
@@ -66,26 +111,38 @@ export default function FormFacility({ region, onSuccess }: Props) {
       id: newId,
       type: 'FACILITY_DAMAGE',
       timestamp,
-      regionSummary: `Kec. ${districtName || '-'}, Desa ${villageName || '-'}`,
+      regionSummary,
       title: facilityName,
-      subtitle: `${category} (${activeSubcat}) • ${damageLevel}`,
+      subtitle,
       status: 'SYNCING',
       payload,
     };
 
-    // Save to local storage queue first
     addLogEntry(logEntry);
 
-    // Sync to Google Sheets
-    const syncRes = await syncEntryToGoogleSheets(logEntry);
+    try {
+      const syncRes = await syncEntryToGoogleSheets(logEntry, region.regencyCode);
+      if (syncRes.success) {
+        setFeedback({
+          type: 'success',
+          message: syncRes.message,
+        });
+        setConfig(getSpreadsheetConfig(region.regencyCode));
+      } else {
+        setFeedback({
+          type: 'error',
+          message: syncRes.message,
+        });
+      }
+    } catch (e: any) {
+      setFeedback({
+        type: 'error',
+        message: `Terjadi kesalahan saat menyinkronkan: ${e?.message || 'Gagal menghubungi server'}`,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
 
-    setIsSubmitting(false);
-    setFeedback({
-      type: syncRes.success ? 'success' : 'error',
-      message: syncRes.message,
-    });
-
-    // Reset Form Fields
     setFacilityName('');
     setSubLocation('');
     setNotesNeeded('');
@@ -97,15 +154,53 @@ export default function FormFacility({ region, onSuccess }: Props) {
     }, 4000);
   };
 
-  const damageOptions: { label: DamageLevel; bg: string; border: string; text: string }[] = [
-    { label: 'Rusak Ringan', bg: 'bg-blue-50', border: 'border-blue-300', text: 'text-blue-800' },
-    { label: 'Rusak Sedang', bg: 'bg-amber-50', border: 'border-amber-400', text: 'text-amber-900' },
-    { label: 'Rusak Berat', bg: 'bg-red-50', border: 'border-red-400', text: 'text-red-900' },
-    { label: 'Runtuh', bg: 'bg-rose-100', border: 'border-rose-500', text: 'text-rose-950 font-black' },
+  const damageOptions: { label: DamageLevel; bg: string; border: string; ring: string; text: string }[] = [
+    { label: 'Tidak Ada Kerusakan', bg: 'bg-emerald-50', border: 'border-emerald-500', ring: 'ring-emerald-500', text: 'text-emerald-800' },
+    { label: 'Rusak Ringan', bg: 'bg-blue-50', border: 'border-blue-500', ring: 'ring-blue-500', text: 'text-blue-800' },
+    { label: 'Rusak Sedang', bg: 'bg-amber-50', border: 'border-amber-500', ring: 'ring-amber-500', text: 'text-amber-900' },
+    { label: 'Rusak Berat', bg: 'bg-red-50', border: 'border-red-500', ring: 'ring-red-500', text: 'text-red-900' },
+    { label: 'Runtuh', bg: 'bg-rose-100', border: 'border-rose-500', ring: 'ring-rose-500', text: 'text-rose-950 font-black' },
   ];
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* SPREADSHEET AUTOMATIC STATUS BANNER */}
+      <div
+        className={`p-3.5 rounded-xl border text-xs shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+          isConnected
+            ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+            : 'bg-blue-50 border-blue-200 text-blue-950'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-base shrink-0">
+            {isConnected ? '✅' : '✨'}
+          </span>
+          <div>
+            <p className="font-extrabold text-xs">
+              {isConnected
+                ? `Spreadsheet Terhubung (${region.regencyName})`
+                : `Spreadsheet Otomatis: ${region.regencyName}`}
+            </p>
+            <p className="text-[11px] opacity-90 font-medium">
+              {isConnected
+                ? 'Data yang diisi akan otomatis disinkronkan ke file Google Sheet milik Anda.'
+                : 'Saat Anda menekan tombol Simpan Data di bawah, file Google Sheet baru untuk wilayah ini akan otomatis dibuatkan di Google Drive Anda.'}
+            </p>
+          </div>
+        </div>
+
+        {isConnected ? (
+          <a
+            href={config.spreadsheetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs shadow transition-all flex items-center justify-center gap-1 shrink-0 active:scale-95"
+          >
+            <span>↗ Buka Sheet</span>
+          </a>
+        ) : null}
+      </div>
       
       {/* SECTION 1: KATEGORI & NAMA FASILITAS */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 space-y-4">
@@ -241,7 +336,7 @@ export default function FormFacility({ region, onSuccess }: Props) {
               onClick={() => setDamageLevel(opt.label)}
               className={`p-3 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 min-h-[72px] ${
                 damageLevel === opt.label
-                  ? `${opt.bg} ${opt.border} ${opt.text} font-bold ring-2 ring-emerald-500 shadow-sm scale-[1.02]`
+                  ? `${opt.bg} ${opt.border} ${opt.ring} ${opt.text} font-bold ring-2 shadow-sm scale-[1.02]`
                   : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-medium'
               }`}
             >
@@ -278,8 +373,9 @@ export default function FormFacility({ region, onSuccess }: Props) {
       {/* SUBMIT BUTTON */}
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="w-full py-4 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base shadow-lg shadow-emerald-600/25 border border-emerald-500 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+        disabled={isSubmitting || !facilityName.trim()}
+        title={!facilityName.trim() ? "Isi Nama Fasilitas terlebih dahulu" : ""}
+        className="w-full py-4 px-6 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-base shadow-lg shadow-emerald-600/25 border border-emerald-500 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {isSubmitting ? (
           <>

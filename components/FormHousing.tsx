@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   DamageLevel,
   Gender,
@@ -8,8 +8,10 @@ import {
   LogEntry,
   RegionSelection,
 } from "@/types/resku";
-import { addLogEntry } from "@/lib/storage";
-import { syncEntryToGoogleSheets } from "@/lib/google-sheets";
+import { addLogEntry, getSpreadsheetConfig } from "@/lib/storage";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { auth, googleDriveProvider } from "@/lib/firebase";
+import { ensureSpreadsheetForRegency, syncEntryToGoogleSheets } from "@/lib/google-sheets";
 
 interface Props {
   region: RegionSelection;
@@ -17,11 +19,53 @@ interface Props {
 }
 
 export default function FormHousing({ region, onSuccess }: Props) {
+  const [config, setConfig] = useState(getSpreadsheetConfig(region.regencyCode));
+  const [isConnecting, setIsConnecting] = useState(false);
   const [headOfHousehold, setHeadOfHousehold] = useState("");
   const [gender, setGender] = useState<Gender>("Laki-laki");
   const [age, setAge] = useState<number | "">("");
   const [subLocation, setSubLocation] = useState("");
   const [damageLevel, setDamageLevel] = useState<DamageLevel>("Rusak Sedang");
+
+  useEffect(() => {
+    const sync = () => setConfig(getSpreadsheetConfig(region.regencyCode));
+    sync();
+    window.addEventListener("resku-config-updated", sync);
+    return () => window.removeEventListener("resku-config-updated", sync);
+  }, [region.regencyCode]);
+
+  const isConnected = Boolean(
+    config.isConnected &&
+    config.spreadsheetId &&
+    !config.spreadsheetId.startsWith("resku-sheet-") &&
+    config.spreadsheetUrl.includes("/spreadsheets/d/")
+  );
+
+  const handleConnectDriveInline = async () => {
+    setIsConnecting(true);
+    try {
+      const result = await signInWithPopup(auth, googleDriveProvider);
+      const user = result.user;
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      const googleToken = credential?.accessToken;
+
+      if (googleToken && typeof window !== "undefined") {
+        localStorage.setItem("resku_google_access_token", googleToken);
+
+        const newConfig = await ensureSpreadsheetForRegency(
+          googleToken,
+          region,
+          user.email || "",
+          user.displayName || "Relawan"
+        );
+        setConfig(newConfig);
+      }
+    } catch (err) {
+      console.error("Inline Drive connection error:", err);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   // Casualty Counters
   const [deceased, setDeceased] = useState<number>(0);
@@ -29,7 +73,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
   const [minorInjury, setMinorInjury] = useState<number>(0);
   const [missing, setMissing] = useState<number>(0);
 
-  const [notes, setNotes] = useState("");
+  const [additionalNotes, setAdditionalNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
@@ -47,11 +91,27 @@ export default function FormHousing({ region, onSuccess }: Props) {
     const timestamp = new Date().toISOString();
 
     const districtName = region.isManual
-      ? region.manualDistrict
+      ? (region.manualDistrict || region.districtName)
       : region.districtName;
     const villageName = region.isManual
-      ? region.manualVillage
+      ? (region.manualVillage || region.villageName)
       : region.villageName;
+    const regencyName = region.regencyName;
+    const provinceName = region.provinceName;
+
+    const regionSummary = `Kec. ${districtName || "-"}, Desa ${villageName || "-"}`;
+
+    const casualtySummaryList = [];
+    if (deceased > 0) casualtySummaryList.push(`${deceased} MD`);
+    if (severeInjury > 0) casualtySummaryList.push(`${severeInjury} LB`);
+    if (minorInjury > 0) casualtySummaryList.push(`${minorInjury} LR`);
+    if (missing > 0) casualtySummaryList.push(`${missing} Hilang`);
+
+    const casualtyText =
+      casualtySummaryList.length > 0
+        ? casualtySummaryList.join(", ")
+        : "Nihil Korban";
+    const subtitle = `${damageLevel} • ${casualtyText}`;
 
     const payload: HousingCasualtyData = {
       id: newId,
@@ -63,48 +123,55 @@ export default function FormHousing({ region, onSuccess }: Props) {
       age: Number(age) || 0,
       damageLevel,
       casualties: {
-        deceased: Number(deceased) || 0,
-        severeInjury: Number(severeInjury) || 0,
-        minorInjury: Number(minorInjury) || 0,
-        missing: Number(missing) || 0,
+        deceased,
+        severeInjury,
+        minorInjury,
+        missing,
       },
-      notes,
+      notes: additionalNotes,
     };
-
-    const casualtySummary = [];
-    if (deceased > 0) casualtySummary.push(`${deceased} Meninggal`);
-    if (severeInjury > 0) casualtySummary.push(`${severeInjury} Luka Berat`);
-    if (minorInjury > 0) casualtySummary.push(`${minorInjury} Luka Ringan`);
-    if (missing > 0) casualtySummary.push(`${missing} Hilang`);
 
     const logEntry: LogEntry = {
       id: newId,
       type: "HOUSING_CASUALTY",
       timestamp,
-      regionSummary: `Kec. ${districtName || "-"}, Desa ${villageName || "-"}`,
-      title: `KK: Bpk/Ibu ${headOfHousehold}`,
-      subtitle: `${damageLevel}${casualtySummary.length > 0 ? ` • ${casualtySummary.join(", ")}` : ""}`,
+      regionSummary,
+      title: `KK: ${headOfHousehold}`,
+      subtitle,
       status: "SYNCING",
       payload,
     };
 
-    // Save to local storage queue first
     addLogEntry(logEntry);
 
-    // Sync to Google Sheets
-    const syncRes = await syncEntryToGoogleSheets(logEntry);
+    try {
+      const syncRes = await syncEntryToGoogleSheets(logEntry, region.regencyCode);
+      if (syncRes.success) {
+        setFeedback({
+          type: "success",
+          message: syncRes.message,
+        });
+        setConfig(getSpreadsheetConfig(region.regencyCode));
+      } else {
+        setFeedback({
+          type: "error",
+          message: syncRes.message,
+        });
+      }
+    } catch (e: any) {
+      setFeedback({
+        type: "error",
+        message: `Terjadi kesalahan saat menyinkronkan: ${e?.message || "Gagal menghubungi server"}`,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
 
-    setIsSubmitting(false);
-    setFeedback({
-      type: syncRes.success ? "success" : "error",
-      message: syncRes.message,
-    });
-
-    // Reset Form Fields
+    // Reset Form
     setHeadOfHousehold("");
     setAge("");
     setSubLocation("");
-    setNotes("");
+    setAdditionalNotes("");
     setDeceased(0);
     setSevereInjury(0);
     setMinorInjury(0);
@@ -121,36 +188,80 @@ export default function FormHousing({ region, onSuccess }: Props) {
     label: DamageLevel;
     bg: string;
     border: string;
+    ring: string;
     text: string;
   }[] = [
     {
       label: "Tidak Ada Kerusakan",
       bg: "bg-emerald-50",
-      border: "border-emerald-300",
+      border: "border-emerald-500",
+      ring: "ring-emerald-500",
       text: "text-emerald-800",
     },
     {
       label: "Rusak Ringan",
       bg: "bg-blue-50",
-      border: "border-blue-300",
+      border: "border-blue-500",
+      ring: "ring-blue-500",
       text: "text-blue-800",
     },
     {
       label: "Rusak Sedang",
       bg: "bg-amber-50",
-      border: "border-amber-400",
+      border: "border-amber-500",
+      ring: "ring-amber-500",
       text: "text-amber-900",
     },
     {
       label: "Rusak Berat",
       bg: "bg-red-50",
-      border: "border-red-400",
+      border: "border-red-500",
+      ring: "ring-red-500",
       text: "text-red-900",
     },
   ];
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      
+      {/* SPREADSHEET AUTOMATIC STATUS BANNER */}
+      <div
+        className={`p-3.5 rounded-xl border text-xs shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+          isConnected
+            ? "bg-emerald-50 border-emerald-300 text-emerald-950"
+            : "bg-blue-50 border-blue-200 text-blue-950"
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-base shrink-0">
+            {isConnected ? "✅" : "✨"}
+          </span>
+          <div>
+            <p className="font-extrabold text-xs">
+              {isConnected
+                ? `Spreadsheet Terhubung (${region.regencyName})`
+                : `Spreadsheet Otomatis: ${region.regencyName}`}
+            </p>
+            <p className="text-[11px] opacity-90 font-medium">
+              {isConnected
+                ? "Data yang diisi akan otomatis disinkronkan ke file Google Sheet milik Anda."
+                : "Saat Anda menekan tombol Simpan Data di bawah, file Google Sheet baru untuk wilayah ini akan otomatis dibuatkan di Google Drive Anda."}
+            </p>
+          </div>
+        </div>
+
+        {isConnected ? (
+          <a
+            href={config.spreadsheetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs shadow transition-all flex items-center justify-center gap-1 shrink-0 active:scale-95"
+          >
+            <span>↗ Buka Sheet</span>
+          </a>
+        ) : null}
+      </div>
+
       {/* SECTION 1: IDENTITAS KK */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
@@ -244,7 +355,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
               onClick={() => setDamageLevel(opt.label)}
               className={`p-3 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 min-h-[72px] ${
                 damageLevel === opt.label
-                  ? `${opt.bg} ${opt.border} ${opt.text} font-bold ring-2 ring-blue-500 shadow-sm scale-[1.02]`
+                  ? `${opt.bg} ${opt.border} ${opt.ring} ${opt.text} font-bold ring-2 shadow-sm scale-[1.02]`
                   : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-medium"
               }`}
             >
@@ -267,7 +378,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {/* Meninggal */}
-          <div className=" p-3 rounded-xl border border-red-200 text-center">
+          <div className=" p-3 rounded-xl shadow-sm hover:shadow-lg text-center">
             <label className="block text-xs font-bold text-red-900 mb-1">
               Meninggal Dunia
             </label>
@@ -299,7 +410,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
           </div>
 
           {/* Luka Berat */}
-          <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-200 text-center">
+          <div className=" p-3 rounded-xl shadow-sm hover:shadow-lg text-center">
             <label className="block text-xs font-bold text-amber-900 mb-1">
               Luka Berat
             </label>
@@ -331,7 +442,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
           </div>
 
           {/* Luka Ringan */}
-          <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-200 text-center">
+          <div className=" p-3 rounded-xl shadow-sm hover:shadow-lg text-center">
             <label className="block text-xs font-bold text-blue-900 mb-1">
               Luka Ringan
             </label>
@@ -363,7 +474,7 @@ export default function FormHousing({ region, onSuccess }: Props) {
           </div>
 
           {/* Hilang */}
-          <div className="bg-slate-100 p-3 rounded-xl border border-slate-300 text-center">
+          <div className=" p-3 rounded-xl shadow-sm hover:shadow-lg text-center">
             <label className="block text-xs font-bold text-slate-800 mb-1">
               Hilang
             </label>
@@ -403,8 +514,8 @@ export default function FormHousing({ region, onSuccess }: Props) {
         </label>
         <textarea
           rows={3}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          value={additionalNotes}
+          onChange={(e) => setAdditionalNotes(e.target.value)}
           className="form-textarea text-xs"
           placeholder="Tuliskan kebutuhan spesifik korban (misal: butuh tenda, selimut, air bersih, penanganan medis darurat)..."
         />
@@ -427,8 +538,9 @@ export default function FormHousing({ region, onSuccess }: Props) {
       {/* SUBMIT BUTTON */}
       <button
         type="submit"
-        disabled={isSubmitting}
-        className="w-full py-4 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-base shadow-lg shadow-blue-600/25 border border-blue-500 transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+        disabled={isSubmitting || !headOfHousehold.trim()}
+        title={!headOfHousehold.trim() ? "Isi nama Kepala Keluarga terlebih dahulu" : ""}
+        className="w-full py-4 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-base shadow-lg shadow-blue-600/25 border border-blue-500 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {isSubmitting ? (
           <>

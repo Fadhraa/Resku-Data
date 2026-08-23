@@ -1,20 +1,21 @@
-import { LogEntry, SpreadsheetConfig } from '@/types/resku';
+import { LogEntry, RegencySpreadsheetItem, SpreadsheetConfig } from '@/types/resku';
 
 const STORAGE_KEYS = {
   LOGS: 'resku_data_logs_v1',
   SPREADSHEET_CONFIG: 'resku_spreadsheet_config_v1',
+  REGENCY_SHEETS: 'resku_regency_sheets_v1',
   USER_SESSION: 'resku_user_session_v1',
   LAST_REGION: 'resku_last_region_v1',
 };
 
 export const DEFAULT_SPREADSHEET_CONFIG: SpreadsheetConfig = {
-  spreadsheetId: '1ReskuData_Matim2026_OfficialSpreadsheet_Demo',
-  spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1ReskuData_Matim2026_OfficialSpreadsheet_Demo/edit#gid=0',
+  spreadsheetId: '',
+  spreadsheetUrl: 'https://docs.google.com/spreadsheets/u/0/',
   sheetNameHousing: 'Permukiman & Jiwa',
   sheetNameFacility: 'Fasilitas Umum',
-  isConnected: true,
-  userEmail: 'relawan.posko@matim2026.go.id',
-  userName: 'Relawan Posko Matim',
+  isConnected: false,
+  userEmail: '',
+  userName: '',
 };
 
 // Internal safe browser check
@@ -54,9 +55,15 @@ export function updateLogStatus(id: string, status: LogEntry['status'], errorMes
   saveLogs(updated);
 }
 
-export function getSpreadsheetConfig(): SpreadsheetConfig {
+export function getSpreadsheetConfig(regencyCode?: string): SpreadsheetConfig {
   if (!isBrowser) return DEFAULT_SPREADSHEET_CONFIG;
   try {
+    if (regencyCode) {
+      const specificKey = `${STORAGE_KEYS.SPREADSHEET_CONFIG}_${regencyCode}`;
+      const rawSpecific = localStorage.getItem(specificKey);
+      if (rawSpecific) return JSON.parse(rawSpecific);
+      return DEFAULT_SPREADSHEET_CONFIG;
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.SPREADSHEET_CONFIG);
     return raw ? JSON.parse(raw) : DEFAULT_SPREADSHEET_CONFIG;
   } catch {
@@ -64,9 +71,13 @@ export function getSpreadsheetConfig(): SpreadsheetConfig {
   }
 }
 
-export function saveSpreadsheetConfig(config: SpreadsheetConfig) {
+export function saveSpreadsheetConfig(config: SpreadsheetConfig, regencyCode?: string) {
   if (!isBrowser) return;
   try {
+    if (regencyCode) {
+      const specificKey = `${STORAGE_KEYS.SPREADSHEET_CONFIG}_${regencyCode}`;
+      localStorage.setItem(specificKey, JSON.stringify(config));
+    }
     localStorage.setItem(STORAGE_KEYS.SPREADSHEET_CONFIG, JSON.stringify(config));
     window.dispatchEvent(new Event('resku-config-updated'));
   } catch (e) {
@@ -79,13 +90,7 @@ export function getUserSession() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.USER_SESSION);
     if (raw) return JSON.parse(raw);
-    // Default active session for fast field use
-    return {
-      email: 'relawan.matim@reskudata.id',
-      name: 'Relawan BPBD Matim 2026',
-      photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      isLoggedIn: true,
-    };
+    return null;
   } catch {
     return null;
   }
@@ -171,4 +176,26 @@ function getSeedInitialLogs(): LogEntry[] {
       },
     },
   ];
+}
+
+export function getAllRegencySpreadsheets(): RegencySpreadsheetItem[] {
+  if (!isBrowser) return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.REGENCY_SHEETS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRegencySpreadsheetItem(item: RegencySpreadsheetItem) {
+  if (!isBrowser) return;
+  try {
+    const current = getAllRegencySpreadsheets();
+    const updated = [item, ...current.filter((i) => i.regencyCode !== item.regencyCode)];
+    localStorage.setItem(STORAGE_KEYS.REGENCY_SHEETS, JSON.stringify(updated));
+    window.dispatchEvent(new Event('resku-regency-sheets-updated'));
+  } catch (e) {
+    console.error('Failed to save regency spreadsheet item:', e);
+  }
 }

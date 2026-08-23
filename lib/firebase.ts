@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
 
 const getEnvVar = (nextKey: string, legacyKey: string, fallback: string) => {
   const val = process.env[nextKey] || process.env[legacyKey] || fallback;
@@ -19,8 +20,9 @@ const firebaseConfig = {
 // Initialize Firebase App Singleton
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firebase Auth
+// Initialize Firebase Auth & Firestore
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 
 // 1. Standard Clean Google Provider (1-Click Fast Login, No Warning Screen)
 export const googleProvider = new GoogleAuthProvider();

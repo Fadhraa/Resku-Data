@@ -99,3 +99,13 @@ export interface SpreadsheetConfig {
   userEmail: string;
   userName: string;
 }
+
+export interface RegencySpreadsheetItem {
+  regencyCode: string;
+  regencyName: string;
+  spreadsheetId: string;
+  spreadsheetUrl: string;
+  userEmail: string;
+  userName: string;
+  createdAt: string;
+}

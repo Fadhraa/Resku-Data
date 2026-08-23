@@ -174,39 +174,11 @@ export default function RegionSelector({ value, onChange }: Props) {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
         <div className="flex items-center gap-2">
           <h2 className="font-bold text-sm sm:text-base text-slate-800 font-display">
-            Wilayah Pendataan Lapangan (Global Context)
+            Wilayah Pendataan Lapangan
           </h2>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Quick Matim Preset Badge */}
-          <button
-            type="button"
-            onClick={handleResetToMatim}
-            className="text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2.5 py-1 rounded-md border border-blue-200 transition-colors flex items-center gap-1"
-            title="Reset Pilihan Cepat ke Kabupaten Manggarai Timur"
-          >
-            <svg
-              className="w-3 h-3 text-blue-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-            <span>Focus: Manggarai Timur</span>
-          </button>
-
           {/* Manual Input Toggle */}
           <button
             type="button"
@@ -217,7 +189,7 @@ export default function RegionSelector({ value, onChange }: Props) {
                 : "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200"
             }`}
           >
-            {value.isManual ? "Mode: Input Manual" : "Mode: Dropdown API"}
+            {value.isManual ? "Mode: Manual" : "Mode: Dropdown "}
           </button>
         </div>
       </div>
