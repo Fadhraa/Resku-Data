@@ -14,16 +14,19 @@ export default function LandingPage() {
 
   // Auto-redirect if user is already logged in or checking redirect result
   useEffect(() => {
-    // 1. Check local session
+    // 1. Check local session first (instant check)
     const localSession = getUserSession();
     if (localSession?.isLoggedIn) {
-      router.replace("/dashboard");
+      window.location.href = "/dashboard";
       return;
     }
 
-    // 2. Check Firebase Auth redirect result (fallback handling for mobile/blocked popup)
-    getRedirectResult(auth)
-      .then((result) => {
+    let unsubscribe: (() => void) | null = null;
+
+    const initAuth = async () => {
+      // 2. Check Firebase Auth redirect result first (handles returning from signInWithRedirect)
+      try {
+        const result = await getRedirectResult(auth);
         if (result) {
           const user = result.user;
           const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -37,35 +40,61 @@ export default function LandingPage() {
             photoUrl: user.photoURL || "",
           });
           window.location.href = "/dashboard";
+          return;
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error("Firebase Auth Redirect Result Error:", err);
-      });
-
-    // 3. Check Firebase Auth state listener
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser) {
-        setUserSession({
-          name: firebaseUser.displayName || "Relawan Posko",
-          email: firebaseUser.email || "",
-          photoUrl: firebaseUser.photoURL || "",
-        });
-        window.location.href = "/dashboard";
-      } else {
-        setIsCheckingAuth(false);
       }
-    });
 
-    return () => unsubscribe();
-  }, [router]);
+      // 3. Only after redirect check completes, subscribe to auth state
+      unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+        if (firebaseUser) {
+          setUserSession({
+            name: firebaseUser.displayName || "Relawan Posko",
+            email: firebaseUser.email || "",
+            photoUrl: firebaseUser.photoURL || "",
+          });
+          window.location.href = "/dashboard";
+        } else {
+          setIsCheckingAuth(false);
+        }
+      });
+    };
+
+    initAuth();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setErrorMessage(null);
 
+    const isLocalhost = typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+
+    // Production (Vercel): gunakan signInWithRedirect karena popup cross-origin diblokir browser
+    // Localhost: gunakan signInWithPopup karena lebih cepat dan tidak ada masalah cross-origin
+    if (!isLocalhost) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        // Browser akan redirect ke Google, lalu kembali ke halaman ini.
+        // getRedirectResult di useEffect akan menangkap hasilnya.
+        return;
+      } catch (error: any) {
+        console.error("Firebase Auth Redirect Error:", error);
+        setErrorMessage(
+          `Gagal memulai login Google: ${error?.message || "Terjadi kesalahan"}`
+        );
+        setIsLoading(false);
+        return;
+      }
+    }
+
+    // Localhost: popup flow
     try {
-      // Clean 1-click Google popup login using standard provider (Profile & Email)
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
@@ -76,32 +105,21 @@ export default function LandingPage() {
         localStorage.setItem("resku_google_access_token", googleToken);
       }
 
-      // Simpan data sesi relawan ke storage lokal
       setUserSession({
         name: user.displayName || "Relawan Posko",
         email: user.email || "",
         photoUrl: user.photoURL || "",
       });
 
-      // Redirect langsung ke dashboard pendataan
       window.location.href = "/dashboard";
     } catch (error: any) {
       console.error("Firebase Google Auth Error:", error);
 
-      if (error?.code === "auth/popup-blocked") {
-        // Fallback ke redirect jika popup diblokir browser
-        try {
-          await signInWithRedirect(auth, googleProvider);
-          return;
-        } catch (redirectErr) {
-          console.error("Firebase Auth Redirect Trigger Error:", redirectErr);
-        }
-        setErrorMessage("Popup login diblokir browser. Mencoba mengalihkan halaman...");
-      } else if (error?.code === "auth/popup-closed-by-user") {
+      if (error?.code === "auth/popup-closed-by-user") {
         setErrorMessage("Login dibatalkan oleh pengguna.");
       } else if (error?.code === "auth/unauthorized-domain") {
         setErrorMessage(
-          "Domain Vercel ini belum ditambahkan ke Authorized Domains di Firebase Console."
+          "Domain ini belum ditambahkan ke Authorized Domains di Firebase Console."
         );
       } else {
         setErrorMessage(
