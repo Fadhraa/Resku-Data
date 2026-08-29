@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, GoogleAuthProvider } from "firebase/auth";
-import { auth, googleDriveProvider } from "@/lib/firebase";
+import { auth, googleProvider } from "@/lib/firebase";
 import { getUserSession, setUserSession } from "@/lib/storage";
 
 export default function LandingPage() {
@@ -65,8 +65,8 @@ export default function LandingPage() {
     setErrorMessage(null);
 
     try {
-      // Direct call to signInWithPopup within user click gesture (without await import delay)
-      const result = await signInWithPopup(auth, googleDriveProvider);
+      // Clean 1-click Google popup login using standard provider (Profile & Email)
+      const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
       const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -89,9 +89,9 @@ export default function LandingPage() {
       console.error("Firebase Google Auth Error:", error);
 
       if (error?.code === "auth/popup-blocked") {
-        // Otomatis fallback ke redirect jika popup diblokir oleh browser
+        // Fallback ke redirect jika popup diblokir browser
         try {
-          await signInWithRedirect(auth, googleDriveProvider);
+          await signInWithRedirect(auth, googleProvider);
           return;
         } catch (redirectErr) {
           console.error("Firebase Auth Redirect Trigger Error:", redirectErr);
