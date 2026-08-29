@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { signInWithPopup, onAuthStateChanged } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
+import { signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, GoogleAuthProvider } from "firebase/auth";
+import { auth, googleDriveProvider } from "@/lib/firebase";
 import { getUserSession, setUserSession } from "@/lib/storage";
 
 export default function LandingPage() {
@@ -12,7 +12,7 @@ export default function LandingPage() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Auto-redirect if user is already logged in
+  // Auto-redirect if user is already logged in or checking redirect result
   useEffect(() => {
     // 1. Check local session
     const localSession = getUserSession();
@@ -21,7 +21,29 @@ export default function LandingPage() {
       return;
     }
 
-    // 2. Check Firebase Auth state
+    // 2. Check Firebase Auth redirect result (fallback handling for mobile/blocked popup)
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          const user = result.user;
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          const googleToken = credential?.accessToken;
+          if (googleToken && typeof window !== "undefined") {
+            localStorage.setItem("resku_google_access_token", googleToken);
+          }
+          setUserSession({
+            name: user.displayName || "Relawan Posko",
+            email: user.email || "",
+            photoUrl: user.photoURL || "",
+          });
+          router.replace("/dashboard");
+        }
+      })
+      .catch((err) => {
+        console.error("Firebase Auth Redirect Result Error:", err);
+      });
+
+    // 3. Check Firebase Auth state listener
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         setUserSession({
@@ -43,9 +65,7 @@ export default function LandingPage() {
     setErrorMessage(null);
 
     try {
-      // Login mulus 1-klik dengan Google Auth & Drive Scopes
-      const { GoogleAuthProvider } = await import("firebase/auth");
-      const { googleDriveProvider } = await import("@/lib/firebase");
+      // Direct call to signInWithPopup within user click gesture (without await import delay)
       const result = await signInWithPopup(auth, googleDriveProvider);
       const user = result.user;
 
@@ -68,15 +88,24 @@ export default function LandingPage() {
     } catch (error: any) {
       console.error("Firebase Google Auth Error:", error);
 
-      if (error?.code === "auth/popup-closed-by-user") {
+      if (error?.code === "auth/popup-blocked") {
+        // Otomatis fallback ke redirect jika popup diblokir oleh browser
+        try {
+          await signInWithRedirect(auth, googleDriveProvider);
+          return;
+        } catch (redirectErr) {
+          console.error("Firebase Auth Redirect Trigger Error:", redirectErr);
+        }
+        setErrorMessage("Popup login diblokir browser. Mencoba mengalihkan halaman...");
+      } else if (error?.code === "auth/popup-closed-by-user") {
         setErrorMessage("Login dibatalkan oleh pengguna.");
       } else if (error?.code === "auth/unauthorized-domain") {
         setErrorMessage(
-          "Domain ini belum ditambahkan ke Authorized Domains di Firebase Console.",
+          "Domain Vercel ini belum ditambahkan ke Authorized Domains di Firebase Console."
         );
       } else {
         setErrorMessage(
-          `Gagal login dengan akun Google: ${error?.message || "Terjadi kesalahan"}`,
+          `Gagal login dengan akun Google: ${error?.message || "Terjadi kesalahan"}`
         );
       }
     } finally {
