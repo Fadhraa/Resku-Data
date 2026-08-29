@@ -72,29 +72,8 @@ export default function LandingPage() {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const isLocalhost = typeof window !== "undefined" &&
-      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-
-    // Production (Vercel): gunakan signInWithRedirect karena popup cross-origin diblokir browser
-    // Localhost: gunakan signInWithPopup karena lebih cepat dan tidak ada masalah cross-origin
-    if (!isLocalhost) {
-      try {
-        await signInWithRedirect(auth, googleProvider);
-        // Browser akan redirect ke Google, lalu kembali ke halaman ini.
-        // getRedirectResult di useEffect akan menangkap hasilnya.
-        return;
-      } catch (error: any) {
-        console.error("Firebase Auth Redirect Error:", error);
-        setErrorMessage(
-          `Gagal memulai login Google: ${error?.message || "Terjadi kesalahan"}`
-        );
-        setIsLoading(false);
-        return;
-      }
-    }
-
-    // Localhost: popup flow
     try {
+      // 1. Try clean 1-click popup login
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
@@ -115,7 +94,16 @@ export default function LandingPage() {
     } catch (error: any) {
       console.error("Firebase Google Auth Error:", error);
 
-      if (error?.code === "auth/popup-closed-by-user") {
+      if (error?.code === "auth/popup-blocked") {
+        // Fallback to redirect if popup is blocked
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.error("Firebase Auth Redirect Error:", redirectErr);
+        }
+        setErrorMessage("Popup login diblokir browser. Mengalihkan via redirect...");
+      } else if (error?.code === "auth/popup-closed-by-user") {
         setErrorMessage("Login dibatalkan oleh pengguna.");
       } else if (error?.code === "auth/unauthorized-domain") {
         setErrorMessage(

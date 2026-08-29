@@ -7,9 +7,16 @@ const getEnvVar = (nextKey: string, legacyKey: string, fallback: string) => {
   return val ? val.trim() : '';
 };
 
+const getAuthDomain = () => {
+  if (typeof window !== 'undefined' && window.location.host) {
+    return window.location.host;
+  }
+  return getEnvVar('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'FIREBASE_authDomain', 'reskudata.firebaseapp.com');
+};
+
 const firebaseConfig = {
   apiKey: getEnvVar('NEXT_PUBLIC_FIREBASE_API_KEY', 'FIREBASE_API_KEY', 'AIzaSyAw9XHEzRuyN8kdTOKIsJ6BoPc_E81oa9Q'),
-  authDomain: getEnvVar('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'FIREBASE_authDomain', 'reskudata.firebaseapp.com'),
+  authDomain: getAuthDomain(),
   projectId: getEnvVar('NEXT_PUBLIC_FIREBASE_PROJECT_ID', 'FIREBASE_projectId', 'reskudata'),
   storageBucket: getEnvVar('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET', 'FIREBASE_storageBucket', 'reskudata.firebasestorage.app'),
   messagingSenderId: getEnvVar('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_messagingSenderId', '491826751375'),
