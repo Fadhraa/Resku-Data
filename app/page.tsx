@@ -36,7 +36,7 @@ export default function LandingPage() {
             email: user.email || "",
             photoUrl: user.photoURL || "",
           });
-          router.replace("/dashboard");
+          window.location.href = "/dashboard";
         }
       })
       .catch((err) => {
@@ -51,7 +51,7 @@ export default function LandingPage() {
           email: firebaseUser.email || "",
           photoUrl: firebaseUser.photoURL || "",
         });
-        router.replace("/dashboard");
+        window.location.href = "/dashboard";
       } else {
         setIsCheckingAuth(false);
       }
@@ -84,7 +84,7 @@ export default function LandingPage() {
       });
 
       // Redirect langsung ke dashboard pendataan
-      router.replace("/dashboard");
+      window.location.href = "/dashboard";
     } catch (error: any) {
       console.error("Firebase Google Auth Error:", error);
 
